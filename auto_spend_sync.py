@@ -49,30 +49,13 @@ BUYER_TO_CAMPAIGN_ID = {
     "ART": 9,
 }
 
-# Название оффера (как в имени TikTok-кампании) -> keyword в Keitaro.
-# Добавлять строку при заведении нового оффера/потока в Keitaro.
-OFFER_TO_KEYWORD = {
-    "квадроциклы": "quadro",
-    "квадрик": "kvadrik",
-    "электровелосипед": "electrovel",
-    "электровелосипеды": "electrovel",
-    "уценка холодильники": "holodilniki",
-    "трициклы": "tricikly",
-    "трицикл": "tricikly",
-    "компрессоры": "kompressory",
-    "компрессор": "kompressory",
-    "мини-тракторы": "minitr",
-    "электроскутеры": "scooter",
-    "стиральные машины": "stiralki",
-    "посудомойки": "posudomoiki",
-    "кондиционеры": "conder",
-    "телевизоры": "tv",
-    "площадки": "play",
-    "мотоблоки": "motobloki",
-}
+# Название оффера больше не мапим руками — keyword достаём напрямую из
+# трекинговой ссылки объявления (там уже есть ?keyword=xxx, т.к. так строятся все ссылки).
 
 TT_HEADERS = {"Access-Token": TIKTOK_ACCESS_TOKEN, "Content-Type": "application/json"}
 KT_HEADERS = {"Api-Key": KEITARO_API_KEY, "Content-Type": "application/json"}
+
+BUYER_TO_CAMPAIGN_ID_LOWER = {k.lower(): v for k, v in BUYER_TO_CAMPAIGN_ID.items()}
 
 
 def get_advertiser_ids():
@@ -86,25 +69,23 @@ def get_advertiser_ids():
         if data.get("code") != 0:
             print(f"ОШИБКА получения кабинетов для BC {bc_id}: {data}")
             continue
-        print(f"DEBUG raw response for BC {bc_id}: {json.dumps(data, ensure_ascii=False)[:2000]}")
         for item in data.get("data", {}).get("list", []):
             adv_id = item.get("advertiser_id") or item.get("asset_id") or item.get("id")
             if adv_id:
                 advertiser_ids.append(adv_id)
-            else:
-                print(f"Пропущен item без advertiser_id: {item}")
     print(f"Найдено кабинетов: {len(advertiser_ids)}")
     return advertiser_ids
 
 
-def get_today_campaign_spend(advertiser_id, date_str):
-    """Тянет расход по кампаниям за день для одного рекламного кабинета."""
+def get_today_ad_spend(advertiser_id, date_str):
+    """Тянет расход по объявлениям (ad-level) за день, вместе с landing page URL,
+    из которого будет извлечён keyword. Также возвращает campaign_name для баера."""
     url = f"{TIKTOK_API_BASE}/report/integrated/get/"
     params = {
         "advertiser_id": advertiser_id,
         "report_type": "BASIC",
-        "dimensions": json.dumps(["campaign_id"]),
-        "data_level": "AUCTION_CAMPAIGN",
+        "dimensions": json.dumps(["ad_id"]),
+        "data_level": "AUCTION_AD",
         "start_date": date_str,
         "end_date": date_str,
         "metrics": json.dumps(["spend", "campaign_name"]),
@@ -113,9 +94,37 @@ def get_today_campaign_spend(advertiser_id, date_str):
     r = requests.get(url, headers=TT_HEADERS, params=params, timeout=30)
     data = r.json()
     if data.get("code") != 0:
-        print(f"ОШИБКА получения расхода для кабинета {advertiser_id}: {data}")
+        print(f"ОШИБКА получения расхода (ad-level) для кабинета {advertiser_id}: {data}")
         return []
     return data.get("data", {}).get("list", [])
+
+
+def get_ad_landing_url(advertiser_id, ad_id):
+    """Отдельный вызов /ad/get/ чтобы достать реальную ссылку объявления (там keyword=...)."""
+    url = f"{TIKTOK_API_BASE}/ad/get/"
+    params = {
+        "advertiser_id": advertiser_id,
+        "filtering": json.dumps({"ad_ids": [ad_id]}),
+        "fields": json.dumps(["ad_id", "landing_page_url"]),
+    }
+    r = requests.get(url, headers=TT_HEADERS, params=params, timeout=30)
+    data = r.json()
+    if data.get("code") != 0:
+        return None
+    ads = data.get("data", {}).get("list", [])
+    if not ads:
+        return None
+    return ads[0].get("landing_page_url")
+
+
+def extract_keyword_from_url(url):
+    """Достаёт значение параметра keyword=... из ссылки объявления."""
+    if not url:
+        return None
+    m = re.search(r"[?&]keyword=([^&]+)", url)
+    if not m:
+        return None
+    return m.group(1)
 
 
 def parse_campaign_name(name):
@@ -163,26 +172,30 @@ def main():
     unmapped_buyers = set()
 
     for adv_id in advertiser_ids:
-        rows = get_today_campaign_spend(adv_id, today)
+        rows = get_today_ad_spend(adv_id, today)
         for row in rows:
+            dims = row.get("dimensions", {})
             metrics = row.get("metrics", {})
+            ad_id = dims.get("ad_id")
             campaign_name = metrics.get("campaign_name", "")
             spend = float(metrics.get("spend", 0) or 0)
             if spend <= 0:
                 continue
 
-            offer_raw, buyer = parse_campaign_name(campaign_name)
-            if not offer_raw or not buyer:
+            _, buyer = parse_campaign_name(campaign_name)
+            if not buyer:
                 continue
 
-            keyword = OFFER_TO_KEYWORD.get(offer_raw.lower())
-            campaign_id = BUYER_TO_CAMPAIGN_ID.get(buyer)
-
-            if not keyword:
-                unmapped_offers.add(offer_raw)
-                continue
+            campaign_id = BUYER_TO_CAMPAIGN_ID_LOWER.get(buyer.lower())
             if not campaign_id:
                 unmapped_buyers.add(buyer)
+                continue
+
+            landing_url = get_ad_landing_url(adv_id, ad_id)
+            keyword = extract_keyword_from_url(landing_url)
+
+            if not keyword:
+                unmapped_offers.add(f"{campaign_name} (ad_id={ad_id}, url={landing_url})")
                 continue
 
             totals.setdefault(buyer, {}).setdefault(keyword, 0)
@@ -190,7 +203,7 @@ def main():
 
     print(f"\nСобрано расхода по {len(totals)} баерам")
     for buyer, keywords in totals.items():
-        campaign_id = BUYER_TO_CAMPAIGN_ID[buyer]
+        campaign_id = BUYER_TO_CAMPAIGN_ID_LOWER[buyer.lower()]
         print(f"\n--- {buyer} (campaign_id={campaign_id}) ---")
         send_update_costs_batch(campaign_id, keywords, today)
 

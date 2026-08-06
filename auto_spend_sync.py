@@ -112,10 +112,9 @@ def extract_keyword_from_campaign_name(name):
     segments = [s for s in link_part.strip("/").split("/") if s]
     if len(segments) < 2:
         return None  # это просто домен без пути, или "cab N" без URL
-    # первый сегмент — домен, берём последний оставшийся сегмент как keyword
-    keyword = segments[-1]
-    # отфильтруем явно не-keyword значения (например "ucenka" как под-путь холодильников —
-    # тогда keyword может быть предпоследним сегментом; берём последний как основной случай)
+    # segments[0] — домен, segments[1] — первый сегмент пути = keyword
+    # (напр. tech-house.of.by/holodilniki/ucenka -> keyword = holodilniki)
+    keyword = segments[1]
     return keyword
 
 

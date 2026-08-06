@@ -19,7 +19,7 @@ import os
 import sys
 import argparse
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
@@ -92,9 +92,11 @@ def discover(campaign_id):
 
 def update_costs(campaign_id, sub_id_field, keyword, cost, date_str, currency="USD",
                   timezone="Europe/Moscow", live=False):
+    start_dt = datetime.strptime(date_str, "%Y-%m-%d")
+    end_dt = start_dt + timedelta(days=1)
     payload = {
         "start_date": date_str,
-        "end_date": date_str,
+        "end_date": end_dt.strftime("%Y-%m-%d"),
         "cost": cost,
         "currency": currency,
         "timezone": timezone,
@@ -128,8 +130,8 @@ def main():
     parser.add_argument("--discover", action="store_true", help="показать потоки и их фильтры")
     parser.add_argument("--test", action="store_true", help="dry-run update_costs")
     parser.add_argument("--live", action="store_true", help="реально отправить update_costs")
-    parser.add_argument("--sub-id-field", default="sub_id_1",
-                         help="какой sub_id_N соответствует Ключевику (узнать через --discover)")
+    parser.add_argument("--sub-id-field", default="keyword",
+                         help="имя поля фильтра потока (по discover это буквально 'keyword', не sub_id_N)")
     parser.add_argument("--keyword", help="значение ключевика (напр. tricikly)")
     parser.add_argument("--cost", type=float, help="полная сумма расхода за день")
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"),

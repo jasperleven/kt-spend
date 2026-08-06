@@ -86,8 +86,13 @@ def get_advertiser_ids():
         if data.get("code") != 0:
             print(f"ОШИБКА получения кабинетов для BC {bc_id}: {data}")
             continue
+        print(f"DEBUG raw response for BC {bc_id}: {json.dumps(data, ensure_ascii=False)[:2000]}")
         for item in data.get("data", {}).get("list", []):
-            advertiser_ids.append(item["advertiser_id"])
+            adv_id = item.get("advertiser_id") or item.get("asset_id") or item.get("id")
+            if adv_id:
+                advertiser_ids.append(adv_id)
+            else:
+                print(f"Пропущен item без advertiser_id: {item}")
     print(f"Найдено кабинетов: {len(advertiser_ids)}")
     return advertiser_ids
 

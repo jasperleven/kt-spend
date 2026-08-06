@@ -77,15 +77,15 @@ def get_advertiser_ids():
     return advertiser_ids
 
 
-def get_today_ad_spend(advertiser_id, date_str):
-    """Тянет расход по объявлениям (ad-level) за день, вместе с landing page URL,
-    из которого будет извлечён keyword. Также возвращает campaign_name для баера."""
+def get_today_campaign_spend(advertiser_id, date_str):
+    """Тянет расход по кампаниям за день. Название кампании уже содержит ссылку
+    с keyword в пути (напр. 'Оффер | БАЕР | domain/keyword | cab...')."""
     url = f"{TIKTOK_API_BASE}/report/integrated/get/"
     params = {
         "advertiser_id": advertiser_id,
         "report_type": "BASIC",
-        "dimensions": json.dumps(["ad_id"]),
-        "data_level": "AUCTION_AD",
+        "dimensions": json.dumps(["campaign_id"]),
+        "data_level": "AUCTION_CAMPAIGN",
         "start_date": date_str,
         "end_date": date_str,
         "metrics": json.dumps(["spend", "campaign_name"]),
@@ -94,37 +94,29 @@ def get_today_ad_spend(advertiser_id, date_str):
     r = requests.get(url, headers=TT_HEADERS, params=params, timeout=30)
     data = r.json()
     if data.get("code") != 0:
-        print(f"ОШИБКА получения расхода (ad-level) для кабинета {advertiser_id}: {data}")
+        print(f"ОШИБКА получения расхода для кабинета {advertiser_id}: {data}")
         return []
     return data.get("data", {}).get("list", [])
 
 
-def get_ad_landing_url(advertiser_id, ad_id):
-    """Отдельный вызов /ad/get/ чтобы достать реальную ссылку объявления (там keyword=...)."""
-    url = f"{TIKTOK_API_BASE}/ad/get/"
-    params = {
-        "advertiser_id": advertiser_id,
-        "filtering": json.dumps({"ad_ids": [ad_id]}),
-        "fields": json.dumps(["ad_id", "landing_page_url"]),
-    }
-    r = requests.get(url, headers=TT_HEADERS, params=params, timeout=30)
-    data = r.json()
-    if data.get("code") != 0:
+def extract_keyword_from_campaign_name(name):
+    """'Оффер | БАЕР | domain/keyword | ...' -> keyword (последний сегмент пути в 3-й части)."""
+    parts = [p.strip() for p in name.split("|")]
+    if len(parts) < 3:
         return None
-    ads = data.get("data", {}).get("list", [])
-    if not ads:
-        return None
-    return ads[0].get("landing_page_url")
-
-
-def extract_keyword_from_url(url):
-    """Достаёт значение параметра keyword=... из ссылки объявления."""
-    if not url:
-        return None
-    m = re.search(r"[?&]keyword=([^&]+)", url)
-    if not m:
-        return None
-    return m.group(1)
+    link_part = parts[2]
+    # уберём протокол если есть, возьмём путь после домена
+    link_part = re.sub(r"^https?://", "", link_part)
+    # уберём query string если есть
+    link_part = link_part.split("?")[0]
+    segments = [s for s in link_part.strip("/").split("/") if s]
+    if len(segments) < 2:
+        return None  # это просто домен без пути, или "cab N" без URL
+    # первый сегмент — домен, берём последний оставшийся сегмент как keyword
+    keyword = segments[-1]
+    # отфильтруем явно не-keyword значения (например "ucenka" как под-путь холодильников —
+    # тогда keyword может быть предпоследним сегментом; берём последний как основной случай)
+    return keyword
 
 
 def parse_campaign_name(name):
@@ -172,11 +164,9 @@ def main():
     unmapped_buyers = set()
 
     for adv_id in advertiser_ids:
-        rows = get_today_ad_spend(adv_id, today)
+        rows = get_today_campaign_spend(adv_id, today)
         for row in rows:
-            dims = row.get("dimensions", {})
             metrics = row.get("metrics", {})
-            ad_id = dims.get("ad_id")
             campaign_name = metrics.get("campaign_name", "")
             spend = float(metrics.get("spend", 0) or 0)
             if spend <= 0:
@@ -191,11 +181,9 @@ def main():
                 unmapped_buyers.add(buyer)
                 continue
 
-            landing_url = get_ad_landing_url(adv_id, ad_id)
-            keyword = extract_keyword_from_url(landing_url)
-
+            keyword = extract_keyword_from_campaign_name(campaign_name)
             if not keyword:
-                unmapped_offers.add(f"{campaign_name} (ad_id={ad_id}, url={landing_url})")
+                unmapped_offers.add(campaign_name)
                 continue
 
             totals.setdefault(buyer, {}).setdefault(keyword, 0)

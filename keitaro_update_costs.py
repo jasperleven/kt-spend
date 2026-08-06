@@ -124,6 +124,34 @@ def update_costs(campaign_id, sub_id_field, keyword, cost, date_str, currency="U
     r.raise_for_status()
 
 
+def update_costs_batch(campaign_id, sub_id_field, costs, date_str, currency="USD",
+                        timezone="Europe/Moscow", live=False):
+    """costs: dict keyword -> cost. Отправляет update_costs по очереди для каждого keyword."""
+    results = {}
+    for keyword, cost in costs.items():
+        print(f"\n===== {keyword}: {cost} =====")
+        try:
+            update_costs(
+                campaign_id=campaign_id,
+                sub_id_field=sub_id_field,
+                keyword=keyword,
+                cost=cost,
+                date_str=date_str,
+                currency=currency,
+                timezone=timezone,
+                live=live,
+            )
+            results[keyword] = "OK"
+        except Exception as e:
+            print(f"ОШИБКА для {keyword}: {e}")
+            results[keyword] = f"FAIL: {e}"
+
+    print("\n===== ИТОГО =====")
+    for k, v in results.items():
+        print(f"{k}: {v}")
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Keitaro Admin API update_costs helper")
     parser.add_argument("--campaign-id", type=int, required=True)
@@ -132,8 +160,11 @@ def main():
     parser.add_argument("--live", action="store_true", help="реально отправить update_costs")
     parser.add_argument("--sub-id-field", default="keyword",
                          help="имя поля фильтра потока (по discover это буквально 'keyword', не sub_id_N)")
-    parser.add_argument("--keyword", help="значение ключевика (напр. tricikly)")
-    parser.add_argument("--cost", type=float, help="полная сумма расхода за день")
+    parser.add_argument("--keyword", help="значение ключевика (напр. tricikly) — для одиночного запуска")
+    parser.add_argument("--cost", type=float, help="полная сумма расхода за день — для одиночного запуска")
+    parser.add_argument("--costs-json",
+                         help='JSON-строка или путь к .json файлу вида {"tricikly": 45.2, "conder": 12.0, ...} '
+                              'для отправки сразу нескольких keyword одним запуском')
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"),
                          help="дата в формате YYYY-MM-DD, по умолчанию сегодня")
     parser.add_argument("--currency", default="USD")
@@ -145,9 +176,27 @@ def main():
         discover(args.campaign_id)
         return
 
+    if args.costs_json and (args.test or args.live):
+        # Строка JSON или путь к файлу
+        if os.path.isfile(args.costs_json):
+            with open(args.costs_json, "r", encoding="utf-8") as f:
+                costs = json.load(f)
+        else:
+            costs = json.loads(args.costs_json)
+        update_costs_batch(
+            campaign_id=args.campaign_id,
+            sub_id_field=args.sub_id_field,
+            costs=costs,
+            date_str=args.date,
+            currency=args.currency,
+            timezone=args.timezone,
+            live=args.live,
+        )
+        return
+
     if args.test or args.live:
         if not args.keyword or args.cost is None:
-            sys.exit("Для --test/--live нужны --keyword и --cost")
+            sys.exit("Для --test/--live нужны --keyword и --cost (или --costs-json для batch-режима)")
         update_costs(
             campaign_id=args.campaign_id,
             sub_id_field=args.sub_id_field,

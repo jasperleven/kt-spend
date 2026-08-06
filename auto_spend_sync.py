@@ -62,17 +62,25 @@ def get_advertiser_ids():
     """Автоматически находит все рекламные кабинеты во всех Business Center."""
     advertiser_ids = []
     for bc_id in BUSINESS_CENTER_IDS:
-        url = f"{TIKTOK_API_BASE}/bc/asset/get/"
-        params = {"bc_id": bc_id, "asset_type": "ADVERTISER"}
-        r = requests.get(url, headers=TT_HEADERS, params=params, timeout=30)
-        data = r.json()
-        if data.get("code") != 0:
-            print(f"ОШИБКА получения кабинетов для BC {bc_id}: {data}")
-            continue
-        for item in data.get("data", {}).get("list", []):
-            adv_id = item.get("advertiser_id") or item.get("asset_id") or item.get("id")
-            if adv_id:
-                advertiser_ids.append(adv_id)
+        page = 1
+        while True:
+            url = f"{TIKTOK_API_BASE}/bc/asset/get/"
+            params = {"bc_id": bc_id, "asset_type": "ADVERTISER", "page": page, "page_size": 50}
+            r = requests.get(url, headers=TT_HEADERS, params=params, timeout=30)
+            data = r.json()
+            if data.get("code") != 0:
+                print(f"ОШИБКА получения кабинетов для BC {bc_id}: {data}")
+                break
+            items = data.get("data", {}).get("list", [])
+            for item in items:
+                adv_id = item.get("advertiser_id") or item.get("asset_id") or item.get("id")
+                if adv_id:
+                    advertiser_ids.append(adv_id)
+            page_info = data.get("data", {}).get("page_info", {})
+            total_page = page_info.get("total_page", 1)
+            if page >= total_page:
+                break
+            page += 1
     print(f"Найдено кабинетов: {len(advertiser_ids)}")
     return advertiser_ids
 

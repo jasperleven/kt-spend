@@ -22,8 +22,8 @@ AmoCRM периодически сам отключает вебхук посл�
 import requests
 import sys
 
-AMO_BASE_URL = "https://ВАШ_ПОДДОМЕН.amocrm.ru"  # TODO: вставить реальный поддомен
-ACCESS_TOKEN = "ВСТАВИТЬ_ACCESS_TOKEN"             # TODO: тот же токен, что в amo_to_keitaro.py
+AMO_BASE_URL = "https://daangrah000.amocrm.ru"
+ACCESS_TOKEN = "ВСТАВЬТЕ_ТОКЕН_ИЗ_/root/fetch_all.py_(переменная AMO_TOKEN)"             # TODO: тот же токен, что в amo_to_keitaro.py
 WEBHOOK_URL  = "http://167.233.96.7:8002/amo-webhook"
 
 EVENTS = [

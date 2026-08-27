@@ -92,19 +92,19 @@ old_main_date = '''def main():
         sys.exit("ERROR: TIKTOK_ACCESS_TOKEN не задан (переменная окружения)")
     if not KEITARO_API_KEY:
         sys.exit("ERROR: KEITARO_ADMIN_API_KEY не задан (переменная окружения)")
-    today = datetime.now().strftime("%Y-%m-%d")
-    print(f"=== Синхронизация расхода за {today} ===")'''
+
+    today = datetime.now().strftime("%Y-%m-%d")'''
 
 new_main_date = '''def main():
     if not TIKTOK_ACCESS_TOKEN:
         sys.exit("ERROR: TIKTOK_ACCESS_TOKEN не задан (переменная окружения)")
     if not KEITARO_API_KEY:
         sys.exit("ERROR: KEITARO_ADMIN_API_KEY не задан (переменная окружения)")
+
     # Можно передать конкретную дату параметром, чтобы пересчитать прошлый день
     # с исправленной логикой: python3 auto_spend_sync.py 2026-08-20
     # Без параметра - берётся сегодня (обычный режим для cron).
-    today = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime("%Y-%m-%d")
-    print(f"=== Синхронизация расхода за {today} ===")'''
+    today = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime("%Y-%m-%d")'''
 
 with open(path, "r", encoding="utf-8") as f:
     content2 = f.read()

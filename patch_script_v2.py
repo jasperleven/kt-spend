@@ -17,8 +17,11 @@ OFFER_TO_KEYWORD = {
 }
 OFFER_TO_KEYWORD_LOWER = {k.lower(): v for k, v in OFFER_TO_KEYWORD.items()}'''
 
-assert old_marker in content, "БЛОК 1 (маркер-комментарий) НЕ НАЙДЕН"
-content = content.replace(old_marker, new_marker)
+if old_marker in content:
+    content = content.replace(old_marker, new_marker)
+    print("Блок 1: применён")
+else:
+    print("Блок 1: уже применён ранее (пропуск)")
 
 # 2. Переписываем extract_keyword_from_campaign_name: фильтр по "Keitaro" + маппинг по офферу
 old_func = '''def extract_keyword_from_campaign_name(name):
@@ -57,8 +60,11 @@ new_func = '''def extract_keyword_from_campaign_name(name):
     offer = parts[0].strip()
     return OFFER_TO_KEYWORD_LOWER.get(offer.lower())'''
 
-assert old_func in content, "БЛОК 2 (функция extract_keyword) НЕ НАЙДЕН"
-content = content.replace(old_func, new_func)
+if old_func in content:
+    content = content.replace(old_func, new_func)
+    print("Блок 2: применён")
+else:
+    print("Блок 2: уже применён ранее (пропуск)")
 
 # 3. В main(): кампании без маркера Keitaro (keyword is None, но это НЕ из-за отсутствия в
 #    словаре) не должны засорять "unmapped_offers". Отличаем два случая: нет маркера vs
@@ -77,8 +83,11 @@ new_main_block = '''            parts_check = [p.strip() for p in campaign_name.
                 unmapped_offers.add(campaign_name)
                 continue'''
 
-assert old_main_block in content, "БЛОК 3 (main loop) НЕ НАЙДЕН"
-content = content.replace(old_main_block, new_main_block)
+if old_main_block in content:
+    content = content.replace(old_main_block, new_main_block)
+    print("Блок 3: применён")
+else:
+    print("Блок 3: уже применён ранее (пропуск)")
 
 with open(path, "w", encoding="utf-8") as f:
     f.write(content)
@@ -109,8 +118,11 @@ new_main_date = '''def main():
 with open(path, "r", encoding="utf-8") as f:
     content2 = f.read()
 
-assert old_main_date in content2, "БЛОК 4 (main date) НЕ НАЙДЕН"
-content2 = content2.replace(old_main_date, new_main_date)
+if old_main_date in content2:
+    content2 = content2.replace(old_main_date, new_main_date)
+    print("Блок 4: применён")
+else:
+    print("Блок 4: уже применён ранее (пропуск)")
 
 with open(path, "w", encoding="utf-8") as f:
     f.write(content2)

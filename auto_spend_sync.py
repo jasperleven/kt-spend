@@ -64,11 +64,10 @@ def get_keitaro_buyer_campaigns():
     return mapping
 
 
-def get_keitaro_streams_keywords(campaign_id):
+def get_keitaro_streams(campaign_id):
     """Тянет потоки кампании (отдельный endpoint - НЕ вложены в объект
-    кампании) и их keyword-фильтры, чтобы сматчить транслитерированный
-    код с реальным существующим keyword. Ответ - плоский список потоков,
-    каждый keyword-фильтр хранит значения в filters[].payload (список)."""
+    кампании) вместе с их keyword-фильтрами и названиями. Возвращает
+    список (keyword, stream_name) пар для матчинга."""
     url = f"{KEITARO_BASE_URL}/admin_api/v1/campaigns/{campaign_id}/streams"
     r = requests.get(url, headers=KT_HEADERS, timeout=30)
     if r.status_code != 200:
@@ -76,24 +75,30 @@ def get_keitaro_streams_keywords(campaign_id):
     streams = r.json()
     if isinstance(streams, dict) and "data" in streams:
         streams = streams["data"]
-    keywords = []
+    result = []
     for s in streams:
+        stream_name = (s.get("name") or "").lower()
         for f in s.get("filters", []):
             if f.get("name") != "keyword":
                 continue
             payload = f.get("payload", [])
-            if isinstance(payload, list):
-                keywords.extend(str(p).lower() for p in payload)
-            elif payload:
-                keywords.append(str(payload).lower())
-    return keywords
+            kws = payload if isinstance(payload, list) else [payload]
+            for kw in kws:
+                if kw:
+                    result.append((str(kw).lower(), stream_name))
+    return result
 
 
-def match_keyword(translit_code, known_keywords):
-    """Ищет транслитерированный код среди известных keyword потоков
-    (частичное совпадение в обе стороны: kolh -> kolh5)."""
-    for kw in known_keywords:
+def match_keyword_full(code, translit_code, streams):
+    """streams: список (keyword, stream_name).
+    1) прямое/частичное совпадение по keyword (kolh -> kolh5)
+    2) fallback: оригинальный код (кириллица, напр. 'колх') как подстрока
+       в названии потока (напр. "Электровелосипед Колхозник")."""
+    for kw, _ in streams:
         if translit_code == kw or translit_code in kw or kw in translit_code:
+            return kw
+    for kw, stream_name in streams:
+        if code in stream_name:
             return kw
     return None
 
@@ -255,8 +260,8 @@ def main():
                     continue
                 tr = translit(code)
                 if campaign_id_kt not in campaign_streams_cache:
-                    campaign_streams_cache[campaign_id_kt] = get_keitaro_streams_keywords(campaign_id_kt)
-                keyword = match_keyword(tr, campaign_streams_cache[campaign_id_kt])
+                    campaign_streams_cache[campaign_id_kt] = get_keitaro_streams(campaign_id_kt)
+                keyword = match_keyword_full(code.lower(), tr, campaign_streams_cache[campaign_id_kt])
                 if not keyword:
                     keitaro_tag_no_match.add(f"{campaign_name} (код '{code}'->'{tr}' не найден в потоках)")
                     continue

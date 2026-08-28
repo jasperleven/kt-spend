@@ -65,21 +65,27 @@ def get_keitaro_buyer_campaigns():
 
 
 def get_keitaro_streams_keywords(campaign_id):
-    """Тянет список потоков кампании и их keyword-фильтры, чтобы
-    сматчить транслитерированный код с реальным существующим keyword."""
-    url = f"{KEITARO_BASE_URL}/admin_api/v1/campaigns/{campaign_id}"
+    """Тянет потоки кампании (отдельный endpoint - НЕ вложены в объект
+    кампании) и их keyword-фильтры, чтобы сматчить транслитерированный
+    код с реальным существующим keyword. Ответ - плоский список потоков,
+    каждый keyword-фильтр хранит значения в filters[].payload (список)."""
+    url = f"{KEITARO_BASE_URL}/admin_api/v1/campaigns/{campaign_id}/streams"
     r = requests.get(url, headers=KT_HEADERS, timeout=30)
     if r.status_code != 200:
         return []
-    campaign = r.json()
-    streams = campaign.get("streams", [])
+    streams = r.json()
+    if isinstance(streams, dict) and "data" in streams:
+        streams = streams["data"]
     keywords = []
     for s in streams:
-        filters = s.get("filters") or s.get("action_filters") or []
-        for f in filters:
-            val = f.get("value") or f.get("expression")
-            if val:
-                keywords.append(str(val).lower())
+        for f in s.get("filters", []):
+            if f.get("name") != "keyword":
+                continue
+            payload = f.get("payload", [])
+            if isinstance(payload, list):
+                keywords.extend(str(p).lower() for p in payload)
+            elif payload:
+                keywords.append(str(payload).lower())
     return keywords
 
 

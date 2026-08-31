@@ -216,6 +216,26 @@ def send_update_costs_batch(campaign_id, keyword_costs, date_str):
         print(f"  campaign {campaign_id} / {keyword} = {cost:.2f} USD -> HTTP {r.status_code} {r.text[:200]}")
 
 
+def send_update_costs_by_subid1(campaign_id, tiktok_campaign_name, cost, date_str):
+    """Для Keitaro-тег кампаний: фильтруем НЕ по keyword (общий на несколько
+    TikTok-кампаний), а по sub_id_1 = точное имя TikTok-кампании. Это
+    изолирует cost строго на клики ЭТОЙ кампании, без утечки на соседние
+    кампании с тем же оффером - математически sum(cost) после распределения
+    равен присланной сумме без потерь (в отличие от keyword-фильтра)."""
+    start_dt = datetime.strptime(date_str, "%Y-%m-%d")
+    end_dt = start_dt + timedelta(days=1)
+    end_str = end_dt.strftime("%Y-%m-%d")
+    payload = {
+        "start_date": date_str, "end_date": end_str, "cost": round(cost, 2),
+        "currency": "USD", "timezone": "Europe/Moscow",
+        "only_campaign_uniques": False,
+        "filters": {"sub_id_1": tiktok_campaign_name},
+    }
+    url = f"{KEITARO_BASE_URL}/admin_api/v1/campaigns/{campaign_id}/update_costs"
+    r = requests.post(url, headers=KT_HEADERS, json=payload, timeout=30)
+    print(f"  campaign {campaign_id} / sub_id_1='{tiktok_campaign_name[:40]}...' = {cost:.2f} USD -> HTTP {r.status_code} {r.text[:200]}")
+
+
 def main():
     if not TIKTOK_ACCESS_TOKEN:
         sys.exit("ERROR: TIKTOK_ACCESS_TOKEN не задан")
@@ -230,6 +250,7 @@ def main():
 
     campaign_streams_cache = {}
     totals = {}
+    keitaro_tag_pushes = []  # (campaign_id_kt, campaign_name, spend) - шлются отдельно по sub_id_1
     unmapped_offers = set()
     unmapped_buyers = set()
     keitaro_tag_no_match = set()
@@ -254,36 +275,32 @@ def main():
                 continue
 
             if is_keitaro_tag(campaign_name):
-                code = get_ad_code(adv_id, campaign_id_tt) if campaign_id_tt else None
-                if not code:
-                    keitaro_tag_no_match.add(campaign_name + " (нет ad_name)")
-                    continue
-                tr = translit(code)
-                if campaign_id_kt not in campaign_streams_cache:
-                    campaign_streams_cache[campaign_id_kt] = get_keitaro_streams(campaign_id_kt)
-                keyword = match_keyword_full(code.lower(), tr, campaign_streams_cache[campaign_id_kt])
-                if not keyword:
-                    keitaro_tag_no_match.add(f"{campaign_name} (код '{code}'->'{tr}' не найден в потоках)")
-                    continue
+                # Не мешаем с обычным keyword-потоком (там сидят и другие
+                # TikTok-кампании с тем же оффером) - шлём отдельно, точно
+                # по имени ЭТОЙ TikTok-кампании через sub_id_1, чтобы cost
+                # не размазывался ни на чей чужой трафик.
+                keitaro_tag_pushes.append((campaign_id_kt, buyer, campaign_name, spend))
             else:
                 keyword = extract_keyword_from_campaign_name(campaign_name)
                 if not keyword:
                     unmapped_offers.add(campaign_name)
                     continue
+                totals.setdefault(buyer, {}).setdefault(keyword, 0)
+                totals[buyer][keyword] += spend
 
-            totals.setdefault(buyer, {}).setdefault(keyword, 0)
-            totals[buyer][keyword] += spend
-
-    print(f"\nСобрано расхода по {len(totals)} баерам")
+    print(f"\nСобрано расхода (обычные ссылки) по {len(totals)} баерам")
     for buyer, keywords in totals.items():
         campaign_id = buyer_campaign_map[buyer.lower()]
         print(f"\n--- {buyer} (campaign_id={campaign_id}) ---")
         send_update_costs_batch(campaign_id, keywords, today)
 
+    if keitaro_tag_pushes:
+        print(f"\nОтправка Keitaro-тег кампаний по sub_id_1 (точно, без утечки): {len(keitaro_tag_pushes)}")
+        for campaign_id_kt, buyer, campaign_name, spend in keitaro_tag_pushes:
+            send_update_costs_by_subid1(campaign_id_kt, campaign_name, spend, today)
+
     if unmapped_offers:
         print(f"\n!!! Кампании без keyword в ссылке: {sorted(unmapped_offers)}")
-    if keitaro_tag_no_match:
-        print(f"!!! Keitaro-тег без совпадения: {sorted(keitaro_tag_no_match)}")
     if unmapped_buyers:
         print(f"!!! Баеры без кампании в Keitaro: {sorted(unmapped_buyers)}")
 

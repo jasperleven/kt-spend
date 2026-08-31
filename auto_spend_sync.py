@@ -295,8 +295,20 @@ def main():
         send_update_costs_batch(campaign_id, keywords, today)
 
     if keitaro_tag_pushes:
-        print(f"\nОтправка Keitaro-тег кампаний по sub_id_1 (точно, без утечки): {len(keitaro_tag_pushes)}")
+        # КРИТИЧНО: одно и то же имя TikTok-кампании (sub_id_1) может
+        # встречаться на РАЗНЫХ рекламных кабинетах (баер копирует шаблон
+        # названия). update_costs делает SET, а не ADD - если слать
+        # отдельно на каждый campaign_id_tt с одинаковым именем, второй
+        # запрос перезатирает первый вместо суммирования. Поэтому сначала
+        # группируем и складываем расход по уникальному (campaign_id_kt,
+        # campaign_name), и шлём ОДИН запрос на уникальное имя.
+        grouped = {}
         for campaign_id_kt, buyer, campaign_name, spend in keitaro_tag_pushes:
+            key = (campaign_id_kt, campaign_name)
+            grouped[key] = grouped.get(key, 0) + spend
+
+        print(f"\nОтправка Keitaro-тег кампаний по sub_id_1 (сгруппировано, {len(grouped)} уникальных имён из {len(keitaro_tag_pushes)} записей):")
+        for (campaign_id_kt, campaign_name), spend in grouped.items():
             send_update_costs_by_subid1(campaign_id_kt, campaign_name, spend, today)
 
     if unmapped_offers:

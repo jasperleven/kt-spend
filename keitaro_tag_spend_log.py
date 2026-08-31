@@ -83,7 +83,7 @@ def get_advertiser_ids():
     return advertiser_ids
 
 
-def get_campaign_spend(advertiser_id, date_str):
+def get_campaign_spend(advertiser_id, date_str, max_retries=3):
     url = f"{TIKTOK_API_BASE}/report/integrated/get/"
     params = {
         "advertiser_id": advertiser_id,
@@ -96,11 +96,20 @@ def get_campaign_spend(advertiser_id, date_str):
         "page_size": 1000,
     }
     headers = {"Access-Token": ADVERTISER_TOKEN.get(advertiser_id, TIKTOK_ACCESS_TOKEN), "Content-Type": "application/json"}
-    r = requests.get(url, headers=headers, params=params, timeout=30)
-    data = r.json()
-    if data.get("code") != 0:
-        return []
-    return data.get("data", {}).get("list", [])
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=30)
+            data = r.json()
+            if data.get("code") != 0:
+                last_error = f"API code {data.get('code')}: {data.get('message')}"
+                continue  # retry
+            return data.get("data", {}).get("list", [])
+        except Exception as e:
+            last_error = str(e)
+            continue  # retry
+    print(f"  [ОШИБКА] advertiser_id={advertiser_id}, date={date_str}: {last_error} - ПРОПУЩЕН после {max_retries} попыток!")
+    return None  # None = точно не удалось (не путать с [] = удалось, но нет данных)
 
 
 def is_keitaro_tag_campaign(name):
@@ -129,10 +138,15 @@ def main():
     else:
         today = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     advertiser_ids = get_advertiser_ids()
+    print(f"Найдено кабинетов: {len(advertiser_ids)}")
 
     totals = {}
+    failed_advertisers = []
     for adv_id in advertiser_ids:
         rows = get_campaign_spend(adv_id, today)
+        if rows is None:
+            failed_advertisers.append(adv_id)
+            continue
         for row in rows:
             metrics = row.get("metrics", {})
             name = metrics.get("campaign_name", "")
@@ -143,6 +157,10 @@ def main():
                 continue
             buyer = parse_buyer(name) or "UNKNOWN"
             totals[buyer] = totals.get(buyer, 0) + spend
+
+    if failed_advertisers:
+        print(f"\n!!! ВНИМАНИЕ: {len(failed_advertisers)} кабинетов не удалось опросить (данные могут быть занижены): {failed_advertisers}")
+        print("!!! Рекомендуется перезапустить скрипт заново, чтобы получить полные данные.\n")
 
     file_exists = os.path.isfile(OUTPUT_CSV)
     with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as f:

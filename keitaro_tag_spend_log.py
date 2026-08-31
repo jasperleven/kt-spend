@@ -26,8 +26,8 @@ from datetime import datetime
 
 import requests
 
-TIKTOK_ACCESS_TOKEN = os.environ.get("TIKTOK_ACCESS_TOKEN", "")
-TIKTOK_ACCESS_TOKEN_BC2 = os.environ.get("TIKTOK_ACCESS_TOKEN_BC2", "")
+TIKTOK_ACCESS_TOKEN = os.environ.get("TIKTOK_MARKETING_TOKEN") or os.environ.get("TIKTOK_ACCESS_TOKEN", "")
+TIKTOK_ACCESS_TOKEN_BC2 = os.environ.get("TIKTOK_MARKETING_TOKEN_NASTYA") or os.environ.get("TIKTOK_ACCESS_TOKEN_BC2", "")
 
 BUSINESS_CENTER_IDS = [
     "7632400042631888913",

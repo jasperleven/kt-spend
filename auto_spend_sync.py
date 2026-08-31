@@ -23,8 +23,8 @@ from datetime import datetime, timedelta
 
 LOCK_FILE = "/tmp/auto_spend_sync.lock"
 
-TIKTOK_ACCESS_TOKEN = os.environ.get("TIKTOK_ACCESS_TOKEN", "")
-TIKTOK_ACCESS_TOKEN_BC2 = os.environ.get("TIKTOK_ACCESS_TOKEN_BC2", "")
+TIKTOK_ACCESS_TOKEN = os.environ.get("TIKTOK_MARKETING_TOKEN") or os.environ.get("TIKTOK_ACCESS_TOKEN", "")
+TIKTOK_ACCESS_TOKEN_BC2 = os.environ.get("TIKTOK_MARKETING_TOKEN_NASTYA") or os.environ.get("TIKTOK_ACCESS_TOKEN_BC2", "")
 
 BUSINESS_CENTER_IDS = ["7632400042631888913", "7410341052470607888"]
 BC_TOKENS = {

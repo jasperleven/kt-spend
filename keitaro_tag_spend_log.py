@@ -42,6 +42,20 @@ ADVERTISER_TOKEN = {}
 TIKTOK_API_BASE = "https://business-api.tiktok.com/open_api/v1.3"
 OUTPUT_CSV = "/root/keitaro_tag_spend.csv"
 
+KEITARO_BASE_URL = os.environ.get("KEITARO_BASE_URL", "http://167.233.96.7")
+KEITARO_API_KEY = os.environ.get("KEITARO_ADMIN_API_KEY", "")
+BUYER_CAMPAIGN_IDS = {"BNS": 10, "VAD": 5, "KRL": 7}
+
+
+def update_campaign_notes(campaign_id, text):
+    """Перезаписывает поле 'Заметки' (notes) кампании через Admin API -
+    это обычное текстовое поле, не связанное с кликами, поэтому пишем
+    туда точное число напрямую, без всякого деления по кликам."""
+    url = f"{KEITARO_BASE_URL}/admin_api/v1/campaigns/{campaign_id}"
+    headers = {"Api-Key": KEITARO_API_KEY, "Content-Type": "application/json"}
+    r = requests.put(url, headers=headers, json={"notes": text}, timeout=30)
+    print(f"  campaign {campaign_id} notes -> HTTP {r.status_code} {r.text[:200]}")
+
 
 def get_advertiser_ids():
     advertiser_ids = []
@@ -142,6 +156,29 @@ def main():
     for buyer, spend in totals.items():
         print(f"  {buyer}: {spend:.2f} USD")
     print(f"Записано в {OUTPUT_CSV}")
+
+    # В "Заметки" пишем не только сегодняшний день, а последние 30 дней
+    # из CSV - список по датам, чтобы можно было визуально прочитать
+    # расход за любой период (неделю, месяц) прямо в Keitaro, без
+    # интерактивного фильтра (notes - обычное текстовое поле).
+    print("\nОбновление поля 'Заметки' в Keitaro (последние 30 дней):")
+    history = {}  # buyer -> {date: spend}
+    with open(OUTPUT_CSV, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            history.setdefault(row["buyer"], {})[row["date"]] = float(row["spend_usd"])
+
+    cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    for buyer in history:
+        campaign_id = BUYER_CAMPAIGN_IDS.get(buyer)
+        if not campaign_id:
+            continue
+        days = sorted((d for d in history[buyer] if d >= cutoff), reverse=True)
+        lines = [f"Реальный расход TikTok по тегу Keitaro (последние 30 дней):"]
+        for d in days:
+            lines.append(f"  {d}: {history[buyer][d]:.2f} USD")
+        text = "\n".join(lines)
+        update_campaign_notes(campaign_id, text)
 
 
 if __name__ == "__main__":

@@ -17,8 +17,11 @@ import os
 import re
 import sys
 import json
+import fcntl
 import requests
 from datetime import datetime, timedelta
+
+LOCK_FILE = "/tmp/auto_spend_sync.lock"
 
 TIKTOK_ACCESS_TOKEN = os.environ.get("TIKTOK_ACCESS_TOKEN", "")
 TIKTOK_ACCESS_TOKEN_BC2 = os.environ.get("TIKTOK_ACCESS_TOKEN_BC2", "")
@@ -237,6 +240,17 @@ def send_update_costs_by_subid1(campaign_id, tiktok_campaign_name, cost, date_st
 
 
 def main():
+    # Защита от параллельного запуска: если cron и ручной запуск пересекутся
+    # по времени, более старый (меньший по накопленной сумме) запрос может
+    # долететь ПОСЛЕ более нового и перезаписать его меньшим значением
+    # (update_costs делает SET, а не ADD) - лок гарантирует, что одновременно
+    # выполняется только один экземпляр скрипта.
+    lock_fp = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit("Другой экземпляр auto_spend_sync.py уже выполняется - выходим, чтобы не создавать гонку записи.")
+
     if not TIKTOK_ACCESS_TOKEN:
         sys.exit("ERROR: TIKTOK_ACCESS_TOKEN не задан")
     if not KEITARO_API_KEY:

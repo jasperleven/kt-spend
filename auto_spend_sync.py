@@ -229,7 +229,7 @@ def send_update_costs_by_subid1(campaign_id, tiktok_campaign_name, cost, date_st
         "start_date": date_str, "end_date": end_str, "cost": round(cost, 2),
         "currency": "USD", "timezone": "Europe/Moscow",
         "only_campaign_uniques": False,
-        "filters": {"sub_id_1": tiktok_campaign_name},
+        "filters": {"sub_id_1": tiktok_campaign_name.strip()},
     }
     url = f"{KEITARO_BASE_URL}/admin_api/v1/campaigns/{campaign_id}/update_costs"
     r = requests.post(url, headers=KT_HEADERS, json=payload, timeout=30)
@@ -304,7 +304,7 @@ def main():
         # campaign_name), и шлём ОДИН запрос на уникальное имя.
         grouped = {}
         for campaign_id_kt, buyer, campaign_name, spend in keitaro_tag_pushes:
-            key = (campaign_id_kt, campaign_name)
+            key = (campaign_id_kt, campaign_name.strip())
             grouped[key] = grouped.get(key, 0) + spend
 
         print(f"\nОтправка Keitaro-тег кампаний по sub_id_1 (сгруппировано, {len(grouped)} уникальных имён из {len(keitaro_tag_pushes)} записей):")

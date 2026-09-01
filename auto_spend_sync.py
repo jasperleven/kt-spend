@@ -107,7 +107,8 @@ def match_keyword_full(code, translit_code, streams):
 
 
 def get_advertiser_ids():
-    advertiser_ids = []
+    """Уникальные advertiser_id - без дублей между BC, иначе расход задвоится."""
+    adv_to_token = {}
     for bc_id in BUSINESS_CENTER_IDS:
         token = BC_TOKENS.get(bc_id, TIKTOK_ACCESS_TOKEN)
         headers = {"Access-Token": token, "Content-Type": "application/json"}
@@ -122,13 +123,14 @@ def get_advertiser_ids():
             items = data.get("data", {}).get("list", [])
             for item in items:
                 adv_id = item.get("advertiser_id") or item.get("asset_id") or item.get("id")
-                if adv_id:
-                    advertiser_ids.append(adv_id)
-                    ADVERTISER_TOKEN[adv_id] = token
+                if adv_id and adv_id not in adv_to_token:
+                    adv_to_token[adv_id] = token
             page_info = data.get("data", {}).get("page_info", {})
             if page >= page_info.get("total_page", 1):
                 break
             page += 1
+    ADVERTISER_TOKEN.update(adv_to_token)
+    advertiser_ids = list(adv_to_token.keys())
     print(f"Найдено кабинетов: {len(advertiser_ids)}")
     return advertiser_ids
 

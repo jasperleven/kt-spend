@@ -58,7 +58,10 @@ def update_campaign_notes(campaign_id, text):
 
 
 def get_advertiser_ids():
-    advertiser_ids = []
+    """Возвращает уникальные advertiser_id (без дублей - один и тот же
+    кабинет может быть виден одновременно в нескольких Business Center,
+    иначе расход по нему задвоится)."""
+    adv_to_token = {}
     for bc_id in BUSINESS_CENTER_IDS:
         token = BC_TOKENS.get(bc_id, TIKTOK_ACCESS_TOKEN)
         headers = {"Access-Token": token, "Content-Type": "application/json"}
@@ -73,14 +76,14 @@ def get_advertiser_ids():
             items = data.get("data", {}).get("list", [])
             for item in items:
                 adv_id = item.get("advertiser_id") or item.get("asset_id") or item.get("id")
-                if adv_id:
-                    advertiser_ids.append(adv_id)
-                    ADVERTISER_TOKEN[adv_id] = token
+                if adv_id and adv_id not in adv_to_token:
+                    adv_to_token[adv_id] = token
             page_info = data.get("data", {}).get("page_info", {})
             if page >= page_info.get("total_page", 1):
                 break
             page += 1
-    return advertiser_ids
+    ADVERTISER_TOKEN.update(adv_to_token)
+    return list(adv_to_token.keys())
 
 
 def get_campaign_spend(advertiser_id, date_str, max_retries=3):

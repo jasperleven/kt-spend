@@ -135,7 +135,14 @@ def get_advertiser_ids():
     return advertiser_ids
 
 
-def get_campaign_spend(advertiser_id, date_str):
+def get_campaign_spend(advertiser_id, date_str, max_retries=3):
+    """ВАЖНО: раньше при любой ошибке TikTok API (rate limit, таймаут,
+    временный сбой) функция молча возвращала [] - расход по этому
+    кабинету бесследно пропадал из totals без единого предупреждения
+    в логе. При 100+ кабинетах вероятность хотя бы одного сбоя за
+    прогон высокая - это подозреваемая причина занижения суммарного
+    расхода (напр. реальный TikTok spend 82.00 -> отправлено в Keitaro
+    40.99 по одной кампании). Теперь: retry + явный сигнал о сбое."""
     url = f"{TIKTOK_API_BASE}/report/integrated/get/"
     params = {
         "advertiser_id": advertiser_id,
@@ -148,11 +155,20 @@ def get_campaign_spend(advertiser_id, date_str):
         "page_size": 1000,
     }
     headers = {"Access-Token": ADVERTISER_TOKEN.get(advertiser_id, TIKTOK_ACCESS_TOKEN), "Content-Type": "application/json"}
-    r = requests.get(url, headers=headers, params=params, timeout=30)
-    data = r.json()
-    if data.get("code") != 0:
-        return []
-    return data.get("data", {}).get("list", [])
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=30)
+            data = r.json()
+            if data.get("code") != 0:
+                last_error = f"API code {data.get('code')}: {data.get('message')}"
+                continue
+            return data.get("data", {}).get("list", [])
+        except Exception as e:
+            last_error = str(e)
+            continue
+    print(f"  [ОШИБКА] advertiser_id={advertiser_id}, date={date_str}: {last_error} - ПРОПУЩЕН после {max_retries} попыток! Расход по этому кабинету НЕ учтён.")
+    return None  # None = точно не удалось (отличаем от [] = удалось, но пусто)
 
 
 def get_ad_code(advertiser_id, campaign_id_tt):
@@ -221,24 +237,14 @@ def send_update_costs_batch(campaign_id, keyword_costs, date_str):
         print(f"  campaign {campaign_id} / {keyword} = {cost:.2f} USD -> HTTP {r.status_code} {r.text[:200]}")
 
 
-def send_update_costs_by_subid1(campaign_id, tiktok_campaign_name, cost, date_str):
-    """Для Keitaro-тег кампаний: фильтруем НЕ по keyword (общий на несколько
-    TikTok-кампаний), а по sub_id_1 = точное имя TikTok-кампании. Это
-    изолирует cost строго на клики ЭТОЙ кампании, без утечки на соседние
-    кампании с тем же оффером - математически sum(cost) после распределения
-    равен присланной сумме без потерь (в отличие от keyword-фильтра)."""
-    start_dt = datetime.strptime(date_str, "%Y-%m-%d")
-    end_dt = start_dt + timedelta(days=1)
-    end_str = end_dt.strftime("%Y-%m-%d")
-    payload = {
-        "start_date": date_str, "end_date": end_str, "cost": round(cost, 2),
-        "currency": "USD", "timezone": "Europe/Moscow",
-        "only_campaign_uniques": False,
-        "filters": {"sub_id_1": tiktok_campaign_name.strip()},
-    }
-    url = f"{KEITARO_BASE_URL}/admin_api/v1/campaigns/{campaign_id}/update_costs"
-    r = requests.post(url, headers=KT_HEADERS, json=payload, timeout=30)
-    print(f"  campaign {campaign_id} / sub_id_1='{tiktok_campaign_name[:40]}...' = {cost:.2f} USD -> HTTP {r.status_code} {r.text[:200]}")
+# send_update_costs_by_subid1() УДАЛЕНА: update_costs по sub_id_1-фильтру
+# подтверждённо не применяется корректно на стороне Keitaro (баг там же,
+# см. docstring keitaro_tag_spend_log.py) - систематически даёт заниженную
+# сумму даже при точном совпадении фильтра и кликов. Реальный точный расход
+# по Keitaro-тег кампаниям теперь идёт ИСКЛЮЧИТЕЛЬНО через
+# keitaro_tag_spend_log.py (пишет в поле "Заметки" напрямую, без деления
+# по кликам - 100% точность подтверждена). Колонка "Расход" для таких
+# кампаний сознательно не заполняется этим скриптом.
 
 
 def main():
@@ -266,13 +272,17 @@ def main():
 
     campaign_streams_cache = {}
     totals = {}
-    keitaro_tag_pushes = []  # (campaign_id_kt, campaign_name, spend) - изолированно, по sub_id_1
+    keitaro_tag_totals = {}  # (campaign_id_kt, campaign_name) -> spend, только для лога/видимости
     unmapped_offers = set()
     unmapped_buyers = set()
     keitaro_tag_no_match = set()
+    failed_advertisers = []
 
     for adv_id in advertiser_ids:
         rows = get_campaign_spend(adv_id, today)
+        if rows is None:
+            failed_advertisers.append(adv_id)
+            continue
         for row in rows:
             metrics = row.get("metrics", {})
             campaign_name = metrics.get("campaign_name", "")
@@ -291,11 +301,13 @@ def main():
                 continue
 
             if is_keitaro_tag(campaign_name):
-                # Считаем и шлём ТОЛЬКО Keitaro-тег кампании отдельным
-                # запросом по sub_id_1 (точное имя TikTok-кампании) -
-                # не мешаем с обычными ссылочными кампаниями того же
-                # оффера/keyword, чтобы их cost не пересекался.
-                keitaro_tag_pushes.append((campaign_id_kt, buyer, campaign_name, spend))
+                # update_costs по sub_id_1 для тег-кампаний БОЛЬШЕ НЕ
+                # отправляется (подтверждённо занижает сумму на стороне
+                # Keitaro). Точный расход по ним считает и пишет в
+                # "Заметки" отдельный скрипт keitaro_tag_spend_log.py.
+                # Здесь только копим для информационного вывода в лог.
+                key = (campaign_id_kt, campaign_name.strip())
+                keitaro_tag_totals[key] = keitaro_tag_totals.get(key, 0) + spend
             else:
                 keyword = extract_keyword_from_campaign_name(campaign_name)
                 if not keyword:
@@ -310,15 +322,16 @@ def main():
         print(f"\n--- {buyer} (campaign_id={campaign_id}) ---")
         send_update_costs_batch(campaign_id, keywords, today)
 
-    if keitaro_tag_pushes:
-        grouped = {}
-        for campaign_id_kt, buyer, campaign_name, spend in keitaro_tag_pushes:
-            key = (campaign_id_kt, campaign_name.strip())
-            grouped[key] = grouped.get(key, 0) + spend
+    if keitaro_tag_totals:
+        print(f"\nKeitaro-тег кампании ({len(keitaro_tag_totals)} уникальных имён) - НЕ отправляются в update_costs "
+              f"(известный баг Keitaro), точные суммы см. в keitaro_tag_spend_log.py / поле 'Заметки':")
+        for (campaign_id_kt, campaign_name), spend in keitaro_tag_totals.items():
+            print(f"  campaign {campaign_id_kt} / sub_id_1='{campaign_name[:40]}...' = {spend:.2f} USD (только лог, не отправлено)")
 
-        print(f"\nОтправка Keitaro-тег кампаний по sub_id_1 (изолированно, {len(grouped)} уникальных имён):")
-        for (campaign_id_kt, campaign_name), spend in grouped.items():
-            send_update_costs_by_subid1(campaign_id_kt, campaign_name, spend, today)
+    if failed_advertisers:
+        print(f"\n!!! ВНИМАНИЕ: {len(failed_advertisers)} кабинетов не удалось опросить после retry "
+              f"(данные могут быть занижены): {failed_advertisers}")
+        print("!!! Рекомендуется перезапустить скрипт заново для этой даты, чтобы получить полные данные.")
 
     if unmapped_offers:
         print(f"\n!!! Кампании без keyword в ссылке: {sorted(unmapped_offers)}")
